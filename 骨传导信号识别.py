@@ -1,46 +1,34 @@
+import scipy.io as sio
 from hmmlearn import hmm
 import numpy as np
-import os
-
-from scipy.io import wavfile
 from python_speech_features import mfcc
 import joblib
 import matplotlib.pyplot as plt
+
 #——————————制作音源文件与标签的对应对应——————————
-#对于同一数据，datas 与 labels 对应的键是相同的，datas的值是对应文件的路径，labels的值是该数据的标签
-def data_process(file):
+
+#data['originalData'][i][0][0]  i从0到19表示数字0，20-39表示数字1依次类推
+
+def data_process():
+    data = sio.loadmat('originalData.mat')
     datas={}
     labels={}
-    for root, dirs, files in os.walk(file):
-        for file in files:
-            dataname=file.strip('.wav')
-            datas[dataname] = os.sep.join((root,file))
-            #文件格式是x-n，x表示该数据的内容，n表示该数据的第几个训练样本
-            #如，2-5表示，第五遍说2的音频文件
-            labels[dataname] = dataname.split('-')[0]
+    for i in range(196):
+        print(i)
+        data1 = np.array(data['originalData'][i][0][0])
+        datas[i] = data1
+        labels[i] = int(i/20)
     return datas , labels
 
 
-
 #——————————获取MFCC特征——————————
-def get_mfcc_feat(file):
-    fs , audio = wavfile.read(file)
-    #fs 为 44100Hz
-    print(audio.shape)
-    mfcc_feat=mfcc(audio,samplerate=(fs/2),nfft=1024)
-    print(mfcc_feat.shape)
-    plt.plot(audio)
-    plt.show()
-
-    plt.plot(mfcc_feat)
-    #plt.imshow(mfcc_feat.T, origin='lower')
-    #plt.figure(figsize=(10, 4))
-    #librosa.display.specshow(feat,
-                             #y_axis='mel', fmax=8000, x_axis='time')
-    # plt.colorbar(format='%+2.0f dB')
-    # plt.title('Mel spectrogram')
-    # plt.tight_layout()
-    #plt.show()
+def get_mfcc_feat(data):
+    # if len(data) % 3:
+    #     pro_data = data[:-(len(data) % 3)].reshape(-1,3)
+    # else:
+    #     pro_data = data.reshape(-1,3)
+    pro_data = data.reshape(-1)
+    mfcc_feat = mfcc(pro_data, samplerate=1200, nfft=256)
     return mfcc_feat
 
 #——————————构造模型——————————
@@ -49,10 +37,12 @@ class Model():
     #n_mix5表示混合的高斯分布由几个高斯分布组成，一般取4或5
     #covariance_type='diag' 表示协方差矩阵的类型
     #n_iter=2000，训练2000次
-    def __init__(self,labelset = None, n_components = 1,n_mix=4, covariance_type='diag', n_iter=2000):
+    def __init__(self,labelset = None, n_components = 3,n_mix=4, covariance_type='diag', n_iter=2000,each_number=20,):
         super(Model,self).__init__()
         self.labelset = labelset
         self.label_num = len(labelset)
+        self.each_number = each_number
+        self.setrange = self.label_num*self.each_number
         self.n_components = n_components
         self.n_mix = n_mix
         self.covariance_type = covariance_type
@@ -69,36 +59,39 @@ class Model():
 #——————————训练模型——————————
 #遍历整个数据集，若数据集的对应的标签的值与当前模型匹配，则将该数据的MFCC特征放入该模型中
     def train(self,datas = None, labels = None):
-        for dataname in datas:
-            for i in range(self.label_num):
-                model = self.models[i]
-                if labels[dataname] == self.labelset[i]:
-                    mfcc_feat = get_mfcc_feat(datas[dataname])
-                    model.fit(mfcc_feat)
-
+        #for i in range(self.setrange):
+        for i in range(196):
+            model = self.models[int(i/self.each_number)]
+            print(i,int(i/self.each_number))
+            print("labels",labels[i],"labelset[int(i/self.each_number)]",self.labelset[int(i/self.each_number)])
+            if labels[i] == self.labelset[int(i/self.each_number)]:
+                mfcc_feat = get_mfcc_feat(datas[i])
+                model.fit(mfcc_feat)
+                print("scess")
 # ——————————测试模型——————————
 #测试每个数据在所有模型中的得分情况，最后将得分最高的模型对应的标签值作为预测值
     def test(self, datas=None, labels = None):
         real = []
         predict = []
-        for dataname in datas:
+        #for j in range(len(datas)):
+        for j in range(196):
             scores=[]
             for i in range(self.label_num):
                 model = self.models[i]
-                mfcc_feat = get_mfcc_feat(datas[dataname])
+                mfcc_feat = get_mfcc_feat(datas[j])
                 score = model.score(mfcc_feat)
                 scores.append(score)
             index = scores.index(max(scores))
             predict.append(self.labelset[index])
-            real.append(labels[dataname])
+            real.append(labels[j])
 
         accuracy = 0
-        print("predict:",predict)
-        print("real",real)
+        print("predict:", predict)
+        print("real", real)
         for i in range(len(real)):
-            if real[i] == predict [i]:
+            if real[i] == predict[i]:
                 accuracy += 1
-        print("识别率： ","percent: {:.2%}".format(accuracy/len(real)))
+        print("识别率： ", "percent: {:.2%}".format(accuracy / len(real)))
 
     def save(self, path="models.pkl"):
         joblib.dump(self.models, path)
@@ -108,10 +101,11 @@ class Model():
         self.models = joblib.load(path)
 
 
+
 if __name__ == "__main__":
-    labelset=[ '1' , '2' , '3' , '4' , '5']
-    datas , labels = data_process('train1_data')
-    testdatas ,testlabels = data_process('test1_data')
+    labelset=[0,1,2,3,4,5,6,7,8,9]
+    datas , labels = data_process()
+    testdatas ,testlabels = data_process()
 
     m = Model(labelset)
     m.get_models()
